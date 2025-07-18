@@ -16,13 +16,25 @@ export function getEnv(key, fallback = "") {
 const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL || "";
 const SUPABASE_KEY = process.env.REACT_APP_SUPABASE_KEY || "";
 
+/**
+ * Get Supabase config validation error string, or null if config is valid.
+ * Useful for runtime UI fallback instead of throwing.
+ * @returns {string|null}
+ */
+// PUBLIC_INTERFACE
+export function getSupabaseConfigError() {
+  if (!SUPABASE_URL) return "Supabase URL missing! Please set REACT_APP_SUPABASE_URL in your .env file.";
+  if (!SUPABASE_KEY) return "Supabase KEY missing! Please set REACT_APP_SUPABASE_KEY in your .env file.";
+  return null;
+}
 
+// For development, throw a clear error. For production, only log and GUARD instantiation.
 function throwConfigError(msg) {
-  // Intentionally break the app in development, provide console message in production build
   if (typeof window !== "undefined") {
-    // eslint-disable-next-line no-alert
     if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-alert
       alert(msg);
+      throw new Error(msg);
     }
     // eslint-disable-next-line no-console
     console.error(`[Supabase Config] ${msg}`);
@@ -30,18 +42,16 @@ function throwConfigError(msg) {
 }
 
 // Defensive runtime validation
-if (!SUPABASE_URL) {
-  throwConfigError(
-    "Supabase URL missing! Please set REACT_APP_SUPABASE_URL in your .env file."
-  );
-}
-if (!SUPABASE_KEY) {
-  throwConfigError(
-    "Supabase KEY missing! Please set REACT_APP_SUPABASE_KEY in your .env file."
-  );
+const configError = getSupabaseConfigError();
+if (configError) {
+  if (process.env.NODE_ENV !== "production") {
+    throwConfigError(configError);
+  }
+  // In production, delay error to the UI layer (return a "broken" client with a guard)
 }
 
-// Instantiate Supabase (may throw if params are empty strings)
-export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// Instantiate Supabase only if config is valid
+export const supabase =
+  !configError ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
 
 export default supabase;

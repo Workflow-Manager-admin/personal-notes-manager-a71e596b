@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import "./App.css";
 import "./NotesApp.css";
-import supabase, { getEnv } from "./utils/supabaseClient";
+import supabase, { getEnv, getSupabaseConfigError } from "./utils/supabaseClient";
 
 /**
  * Minimal note model for local app state
@@ -16,17 +16,20 @@ import supabase, { getEnv } from "./utils/supabaseClient";
 
 // PUBLIC_INTERFACE
 function App() {
+  // All hooks MUST be at the top level
   const [theme, setTheme] = useState("light");
   const [notes, setNotes] = useState([]);
   const [selectedNoteId, setSelectedNoteId] = useState(null);
   const [editorNote, setEditorNote] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
 
-  // Supabase state
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState(null);
+
+  // Config error can be checked any time from util
+  const configError = getSupabaseConfigError();
 
   // Apply theme CSS variable root
   useEffect(() => {
@@ -35,7 +38,9 @@ function App() {
 
   // Load all notes from Supabase on mount
   useEffect(() => {
-    fetchNotes();
+    if (!configError) {
+      fetchNotes();
+    }
     // eslint-disable-next-line
   }, []);
 
@@ -219,6 +224,22 @@ function App() {
   };
 
   // ----------------- COMPONENTS -----------------
+
+  // Now, you can show config error fallback after hooks:
+  if (configError) {
+    return (
+      <div style={{ padding: "2.5rem", textAlign: "center", color: "#b41010" }}>
+        <h2>⚠️ App Configuration Error</h2>
+        <p style={{ fontSize: "1.07rem", margin: "12px 0" }}>
+          {configError}
+        </p>
+        <p style={{ color: "gray", marginTop: "1.7em" }}>
+          Please check your environment variables or contact support.<br/>
+          <code>REACT_APP_SUPABASE_URL / REACT_APP_SUPABASE_KEY</code>
+        </p>
+      </div>
+    );
+  }
 
   function Header() {
     // Minimal & responsive header with clean button alignment
