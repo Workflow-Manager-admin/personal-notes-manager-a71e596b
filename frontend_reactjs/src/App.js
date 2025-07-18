@@ -1,18 +1,7 @@
 import React, { useState, useEffect } from "react";
 import "./App.css";
 import "./NotesApp.css";
-
-/**
- * Gets environment variable (for future backend usage/Supabase integration)
- * @param {string} key - Env variable name
- * @param {string} fallback - Fallback value
- * @returns {string}
- */
-// PUBLIC_INTERFACE
-function getEnv(key, fallback = "") {
-  // By default React scripts exposes only env vars prefixed with REACT_APP_
-  return process.env[`REACT_APP_${key}`] || fallback;
-}
+import supabase, { getEnv } from "./utils/supabaseClient";
 
 /**
  * Minimal note model for local app state
@@ -28,26 +17,27 @@ function getEnv(key, fallback = "") {
 // PUBLIC_INTERFACE
 function App() {
   const [theme, setTheme] = useState("light");
-  const [notes, setNotes] = useState(() =>
-    // Use localStorage for persistence between page reloads
-    {
-      const localData = window.localStorage.getItem("notes");
-      return localData ? JSON.parse(localData) : [];
-    }
-  );
+  const [notes, setNotes] = useState([]);
   const [selectedNoteId, setSelectedNoteId] = useState(null);
-  const [editorNote, setEditorNote] = useState(null); // Copy for edit/new
+  const [editorNote, setEditorNote] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
+
+  // Supabase state
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState(null);
 
   // Apply theme CSS variable root
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
-  // Save notes to localStorage
+  // Load all notes from Supabase on mount
   useEffect(() => {
-    window.localStorage.setItem("notes", JSON.stringify(notes));
-  }, [notes]);
+    fetchNotes();
+    // eslint-disable-next-line
+  }, []);
 
   // Select the first note if available when none selected
   useEffect(() => {
@@ -78,22 +68,51 @@ function App() {
   };
 
   // PUBLIC_INTERFACE
-  const handleSelectNote = (id) => {
-    setSelectedNoteId(id);
+  const fetchNotes = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data, error: supaErr } = await supabase
+        .from("notes")
+        .select("*")
+        .order("updated", { ascending: false });
+      if (supaErr) throw supaErr;
+      setNotes(data || []);
+    } catch (err) {
+      setError("Could not load notes.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   // PUBLIC_INTERFACE
-  const handleDeleteNote = (id) => {
+  const handleSelectNote = (id) => {
+    setSelectedNoteId(id);
+    setError(null);
+  };
+
+  // PUBLIC_INTERFACE
+  const handleDeleteNote = async (id) => {
     if (!window.confirm("Delete this note?")) return;
-    setNotes((prev) => prev.filter((n) => n.id !== id));
-    // After deletion, auto-select next note
-    const idx = notes.findIndex((n) => n.id === id);
-    if (idx > 0 && notes.length > 1) {
-      setSelectedNoteId(notes[idx - 1].id);
-    } else if (notes.length > 1) {
-      setSelectedNoteId(notes[1].id);
-    } else {
-      setSelectedNoteId(null);
+    setDeleting(true);
+    setError(null);
+    try {
+      const { error: supaErr } = await supabase.from("notes").delete().eq("id", id);
+      if (supaErr) throw supaErr;
+      setNotes((prev) => prev.filter((n) => n.id !== id));
+      // After deletion, auto-select next note
+      const idx = notes.findIndex((n) => n.id === id);
+      if (idx > 0 && notes.length > 1) {
+        setSelectedNoteId(notes[idx - 1].id);
+      } else if (notes.length > 1) {
+        setSelectedNoteId(notes[1].id);
+      } else {
+        setSelectedNoteId(null);
+      }
+    } catch (err) {
+      setError("Unable to delete note.");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -101,8 +120,9 @@ function App() {
   const handleStartEdit = () => {
     if (!selectedNoteId) return;
     const note = notes.find((n) => n.id === selectedNoteId);
-    setEditorNote({ ...note }); // Shallow copy for editing
+    setEditorNote({ ...note });
     setIsEditing(true);
+    setError(null);
   };
 
   // PUBLIC_INTERFACE
@@ -110,6 +130,7 @@ function App() {
     setEditorNote({ id: "", title: "", content: "" });
     setIsEditing(true);
     setSelectedNoteId(null);
+    setError(null);
   };
 
   // PUBLIC_INTERFACE
@@ -118,7 +139,7 @@ function App() {
   };
 
   // PUBLIC_INTERFACE
-  const handleSaveNote = () => {
+  const handleSaveNote = async () => {
     const { title = "", content = "" } = editorNote || {};
     const trimmedTitle = title.trim();
     const trimmedContent = content.trim();
@@ -126,36 +147,62 @@ function App() {
       alert("Please enter a title or content.");
       return;
     }
+    setSaving(true);
+    setError(null);
     if (!editorNote.id) {
       // New note
-      const newId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      const newNote = {
-        id: newId,
-        title: trimmedTitle || "Untitled",
-        content: trimmedContent,
-        created: Date.now(),
-        updated: Date.now(),
-      };
-      setNotes((prev) => [newNote, ...prev]);
-      setSelectedNoteId(newId);
-      setIsEditing(false);
-      setEditorNote(null);
+      try {
+        const now = Date.now();
+        const noteObj = {
+          title: trimmedTitle || "Untitled",
+          content: trimmedContent,
+          created: now,
+          updated: now,
+        };
+        const { error: supaErr, data } = await supabase
+          .from("notes")
+          .insert([noteObj])
+          .select()
+          .single();
+        if (supaErr) throw supaErr;
+        setNotes((prev) => [data, ...prev]);
+        setSelectedNoteId(data.id);
+        setIsEditing(false);
+        setEditorNote(null);
+      } catch (err) {
+        setError("Failed to create note.");
+      } finally {
+        setSaving(false);
+      }
     } else {
       // Edit existing note
-      setNotes((prev) =>
-        prev.map((n) =>
-          n.id === editorNote.id
-            ? {
-                ...n,
-                title: trimmedTitle || "Untitled",
-                content: trimmedContent,
-                updated: Date.now(),
-              }
-            : n
-        )
-      );
-      setIsEditing(false);
-      setEditorNote(null);
+      try {
+        const now = Date.now();
+        const { error: supaErr, data } = await supabase
+          .from("notes")
+          .update({
+            title: trimmedTitle || "Untitled",
+            content: trimmedContent,
+            updated: now,
+          })
+          .eq("id", editorNote.id)
+          .select()
+          .single();
+        if (supaErr) throw supaErr;
+        setNotes((prev) =>
+          prev.map((n) =>
+            n.id === editorNote.id
+              ? { ...data }
+              : n
+          )
+        );
+        setIsEditing(false);
+        setEditorNote(null);
+      } catch (err) {
+        setError("Failed to update note.");
+      } finally {
+        setSaving(false);
+      }
     }
   };
 
@@ -168,24 +215,29 @@ function App() {
       setEditorNote(null);
       setIsEditing(false);
     }
+    setError(null);
   };
 
   // ----------------- COMPONENTS -----------------
 
   function Header() {
+    // Adjust flex for non-overlap of New Note and Theme buttons
     return (
-      <header className="notes-header">
+      <header className="notes-header" style={{ position: "relative" }}>
         <div className="notes-title">📝 Personal Notes</div>
-        <button className="btn new-note-btn" onClick={handleNewNote}>
-          + New Note
-        </button>
-        <button
-          className="theme-toggle"
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-        >
-          {theme === "light" ? "🌙 Dark" : "☀️ Light"}
-        </button>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", marginLeft: "auto" }}>
+          <button className="btn new-note-btn" onClick={handleNewNote} disabled={saving || loading}>
+            + New Note
+          </button>
+          <button
+            className="theme-toggle"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+            style={{ position: "static" }} // remove absolute so buttons don't overlap
+          >
+            {theme === "light" ? "🌙 Dark" : "☀️ Light"}
+          </button>
+        </div>
       </header>
     );
   }
@@ -193,7 +245,9 @@ function App() {
   function NoteList() {
     return (
       <nav className="notes-list">
-        {notes.length === 0 ? (
+        {loading ? (
+          <div className="notes-empty">Loading notes...</div>
+        ) : notes.length === 0 ? (
           <div className="notes-empty">No notes yet.</div>
         ) : (
           <ul>
@@ -204,24 +258,25 @@ function App() {
                 onClick={() => handleSelectNote(note.id)}
                 tabIndex={0}
                 aria-selected={note.id === selectedNoteId}
+                style={deleting ? { opacity: 0.6, pointerEvents: 'none' } : {}}
               >
                 <div className="note-title">{note.title}</div>
                 <div className="note-meta">
                   <span>
-                    {new Date(note.updated).toLocaleDateString()}{" "}
-                    {new Date(note.updated).toLocaleTimeString([], {
+                    {note.updated ? `${new Date(note.updated).toLocaleDateString()} ${new Date(note.updated).toLocaleTimeString([], {
                       hour: "2-digit",
                       minute: "2-digit",
-                    })}
+                    })}` : ""}
                   </span>
                   <button
                     className="btn small danger"
                     title="Delete note"
-                    onClick={(e) => {
+                    onClick={async (e) => {
                       e.stopPropagation();
-                      handleDeleteNote(note.id);
+                      await handleDeleteNote(note.id);
                     }}
                     aria-label="Delete note"
+                    disabled={deleting}
                   >
                     🗑
                   </button>
@@ -244,6 +299,7 @@ function App() {
           placeholder="Title"
           value={editorNote?.title || ""}
           onChange={(e) => handleEditorChange("title", e.target.value)}
+          disabled={saving}
         />
         <textarea
           className="note-content-input"
@@ -251,15 +307,17 @@ function App() {
           value={editorNote?.content || ""}
           onChange={(e) => handleEditorChange("content", e.target.value)}
           rows={12}
+          disabled={saving}
         />
         <div className="editor-actions">
-          <button className="btn primary" onClick={handleSaveNote}>
-            Save
+          <button className="btn primary" onClick={handleSaveNote} disabled={saving}>
+            {saving ? "Saving..." : "Save"}
           </button>
-          <button className="btn secondary" onClick={handleCancelEdit}>
+          <button className="btn secondary" onClick={handleCancelEdit} disabled={saving}>
             Cancel
           </button>
         </div>
+        {error && <div style={{ color: "red", marginTop: 10 }}>{error}</div>}
       </div>
     );
   }
@@ -268,7 +326,7 @@ function App() {
     if (!editorNote) {
       return (
         <div className="note-viewer note-viewer-empty">
-          <span>Select or create a note to view.</span>
+          <span>{loading ? "Loading..." : "Select or create a note to view."}</span>
         </div>
       );
     }
@@ -278,10 +336,12 @@ function App() {
         <div className="note-view-meta">
           <span>
             Updated:{" "}
-            {new Date(editorNote.updated).toLocaleString(undefined, {
-              dateStyle: "short",
-              timeStyle: "short",
-            })}
+            {editorNote.updated
+              ? new Date(editorNote.updated).toLocaleString(undefined, {
+                  dateStyle: "short",
+                  timeStyle: "short",
+                })
+              : ""}
           </span>
         </div>
         <div className="note-view-content">
@@ -293,16 +353,13 @@ function App() {
             <span className="note-view-placeholder">No content.</span>
           )}
         </div>
-        <button className="btn edit-btn" onClick={handleStartEdit}>
+        <button className="btn edit-btn" onClick={handleStartEdit} disabled={saving || loading}>
           Edit
         </button>
+        {error && <div style={{ color: "red", marginTop: 10 }}>{error}</div>}
       </div>
     );
   }
-
-  // For future Supabase/remote backend usage; currently just demonstrates reading .env config
-  const SUPABASE_URL = getEnv("SUPABASE_URL");
-  const SUPABASE_KEY = getEnv("SUPABASE_KEY");
 
   // Main Layout
   return (
@@ -326,7 +383,7 @@ function App() {
         </span>
         {/* For demonstration: .env display (hidden) */}
         <span style={{ display: "none" }}>
-          {SUPABASE_URL} {SUPABASE_KEY}
+          {getEnv("SUPABASE_URL")} {getEnv("SUPABASE_KEY")}
         </span>
       </footer>
     </div>
