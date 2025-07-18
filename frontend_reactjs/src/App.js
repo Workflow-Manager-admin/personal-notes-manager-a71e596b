@@ -221,19 +221,22 @@ function App() {
   // ----------------- COMPONENTS -----------------
 
   function Header() {
-    // Adjust flex for non-overlap of New Note and Theme buttons
+    // Minimal & responsive header with clean button alignment
     return (
-      <header className="notes-header" style={{ position: "relative" }}>
+      <header className="notes-header">
         <div className="notes-title">📝 Personal Notes</div>
-        <div style={{ display: "flex", gap: "10px", alignItems: "center", marginLeft: "auto" }}>
-          <button className="btn new-note-btn" onClick={handleNewNote} disabled={saving || loading}>
+        <div className="notes-header-actions">
+          <button
+            className="btn new-note-btn"
+            onClick={handleNewNote}
+            disabled={saving || loading}
+          >
             + New Note
           </button>
           <button
             className="theme-toggle"
             onClick={toggleTheme}
             aria-label={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-            style={{ position: "static" }} // remove absolute so buttons don't overlap
           >
             {theme === "light" ? "🌙 Dark" : "☀️ Light"}
           </button>
